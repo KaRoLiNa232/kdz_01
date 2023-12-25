@@ -99,6 +99,7 @@ min(loaded_ts) as ts1,
 max(loaded_ts) as ts2
 from kdz_01_src.flights
 where loaded_ts >= coalesce((select max(loaded_ts) from kdz_01_etl.flights_load), '1970-01-01');
+
 drop table if exists kdz_01_etl.flights_01;
 create table if not exists kdz_01_etl.flights_01 as
 select distinct on (fl_date, op_carrier_fl_num, origin, dest, crs_dep_time)
@@ -126,8 +127,9 @@ CAST(air_time as float) as air_time,
 CAST(distance as float) as distance,
 CAST(weather_delay as float) as weather_delay
 from kdz_01_src.flights, kdz_01_etl.flights_00
-where loaded_ts > ts1 and loaded_ts <=ts2
+where loaded_ts > ts1 and loaded_ts <=ts2 and origin = 'RNO'
 order by fl_date, op_carrier_fl_num, origin, dest, crs_dep_time, loaded_ts;
+
 insert into kdz_01_staging.flights(
 "year",
 "quarter",
@@ -243,7 +245,7 @@ ww_recent,
 c_total_clouds,
 vv_horizontal_visibl,
 td_temp_dewpoint
-from  kdz_01_src.weather, kdz_01_etl.weather_00
+from  kdz_01_src.weather, kdz_01_etl.weather_00
 where loaded_ts > ts1 and loaded_ts <=ts2
 order by local_time ,loaded_ts desc;
 ;
@@ -293,6 +295,14 @@ td_temp_dewpoint = excluded.td_temp_dewpoint ,
 loaded_ts = now()
 ;
 
+delete from kdz_01_etl.weather_load
+where exists(select 1 from kdz_01_etl.weather_00);
+insert into kdz_01_etl.weather_load(loaded_ts)
+select ts2
+from kdz_01_etl.weather_00
+where exists(select 1 from kdz_01_etl.weather_00);
+
+
 create table kdz_01_dwh.flights_id(
 fl_date timestamp not null,
 op_carrier_fl_num varchar(50) not null,
@@ -302,7 +312,7 @@ crs_dep_time varchar(50) not null,
 dwh_id int8 not null generated always as identity primary key,
 system_n varchar(50) not null,
 loaded_ts timestamptz not null default(now())
-);
+);	
 
 create table kdz_01_dwh.weather_id(
 local_time timestamp not null,
@@ -344,7 +354,7 @@ CREATE TABLE kdz_01_dds.flights (
 	flight_number_reporting_airline varchar(15) NOT NULL,
 	airport_origin_dk int NULL,
 	origin_code varchar(5) not null,
-	airport_dest_dk int NULL, 
+	airport_dest_dk int NULL, 
 	dest_code varchar(5) not null,
 	dep_delay_minutes float NULL,
 	cancelled int NOT NULL,
@@ -368,48 +378,48 @@ fl_date not in (select fl_date from kdz_01_dwh.flights_id where
 system_n = 'flights')
 and op_carrier_fl_num not in (select op_carrier_fl_num from kdz_01_dwh.flights_id where
 system_n = 'flights')
-and crs_dep_time  not in (select crs_dep_time from kdz_01_dwh.flights_id where
+and crs_dep_time  not in (select crs_dep_time from kdz_01_dwh.flights_id where
 system_n = 'flights')
-and dest  not in (select dest from kdz_01_dwh.flights_id where
+and dest  not in (select dest from kdz_01_dwh.flights_id where
 system_n = 'flights')
-and origin  not in (select origin from kdz_01_dwh.flights_id where
+and origin  not in (select origin from kdz_01_dwh.flights_id where
 system_n = 'flights')
 ;
 
-insert into  kdz_01_dwh.flights_id (fl_date, op_carrier_fl_num, crs_dep_time, dest, origin ,system_n)
+insert into  kdz_01_dwh.flights_id (fl_date, op_carrier_fl_num, crs_dep_time, dest, origin ,system_n)
 select fl_date, op_carrier_fl_num, crs_dep_time, dest, origin ,system_n
 from kdz_01_etl.flights_id;
 
 
 INSERT INTO kdz_01_dds.flights (year, quarter, month, flight_scheduled_date, flight_dep_actual_ts, flight_dep_scheduled_ts, flight_actual_date, report_airline, tail_number, flight_number_reporting_airline, airport_origin_dk, origin_code, airport_dest_dk, dest_code, dep_delay_minutes, cancelled, cancellation_code, weather_delay, air_time, distance)
 SELECT
-   s.year,
-   s.quarter,
-   s.month,
-   s.fl_date::date AS flight_scheduled_date,
-   s.fl_date::date + (s.crs_dep_time::time) + (s.dep_delay_new || ' minutes')::interval AS flight_dep_actual_ts,
-   s.fl_date::date + (substring(s.crs_dep_time from 1 for 2) || ':' || substring(s.crs_dep_time from 3 for 2))::time AS flight_dep_scheduled_ts,
-   (s.fl_date::date + (s.crs_dep_time::time) + (s.dep_delay_new || ' minutes')::interval)::date AS flight_actual_date,
-   s.op_unique_carrier AS report_airline,
-   COALESCE(s.tail_num, '') AS tail_number,
-   s.op_carrier_fl_num AS flight_number_reporting_airline,
-   a1.airport_dk AS airport_origin_dk,
-   s.origin AS origin_code,
-   a2.airport_dk AS airport_dest_dk,
-   s.dest AS dest_code,
-   s.dep_delay_new::float AS dep_delay_minutes,
-   ROUND(CAST(s.cancelled AS float)) AS cancelled,
-   s.cancellation_code,
-   s.weather_delay,
-   s.air_time,
-   s.distance
+   s.year,
+   s.quarter,
+   s.month,
+   s.fl_date::date AS flight_scheduled_date,
+   s.fl_date::date + (s.crs_dep_time::time) + (s.dep_delay_new || ' minutes')::interval AS flight_dep_actual_ts,
+   s.fl_date::date + (substring(s.crs_dep_time from 1 for 2) || ':' || substring(s.crs_dep_time from 3 for 2))::time AS flight_dep_scheduled_ts,
+   (s.fl_date::date + (s.crs_dep_time::time) + (s.dep_delay_new || ' minutes')::interval)::date AS flight_actual_date,
+   s.op_unique_carrier AS report_airline,
+   COALESCE(s.tail_num, '') AS tail_number,
+   s.op_carrier_fl_num AS flight_number_reporting_airline,
+   a1.airport_dk AS airport_origin_dk,
+   s.origin AS origin_code,
+   a2.airport_dk AS airport_dest_dk,
+   s.dest AS dest_code,
+   s.dep_delay_new::float AS dep_delay_minutes,
+   ROUND(CAST(s.cancelled AS float)) AS cancelled,
+   s.cancellation_code,
+   s.weather_delay,
+   s.air_time,
+   s.distance
 FROM kdz_01_staging.flights s
 INNER JOIN kdz_01_dwh.flights_id d ON
-   s.fl_date = d.fl_date AND
-   s.op_carrier_fl_num = d.op_carrier_fl_num AND
-   s.crs_dep_time = d.crs_dep_time AND
-   s.dest = d.dest AND
-   s.origin = d.origin
+   s.fl_date = d.fl_date AND
+   s.op_carrier_fl_num = d.op_carrier_fl_num AND
+   s.crs_dep_time = d.crs_dep_time AND
+   s.dest = d.dest AND
+   s.origin = d.origin
 LEFT JOIN dds.airport a1 ON s.origin = a1.iata_code
 LEFT JOIN dds.airport a2 ON s.dest = a2.iata_code
 ON CONFLICT (flight_dep_scheduled_ts, flight_number_reporting_airline, origin_code, dest_code) DO UPDATE set
@@ -439,11 +449,11 @@ ON CONFLICT (flight_dep_scheduled_ts, flight_number_reporting_airline, origin_co
 drop table if exists kdz_01_etl.weather_id;
 create table kdz_01_etl.weather_id as
 select distinct local_time as local_time, 'weather' as system_n
-from kdz_01_staging.weather 
+from kdz_01_staging.weather 
 where
 local_time not in (select local_time from kdz_01_dwh.weather_id where system_n = 'weather');
 
-insert into  kdz_01_dwh.weather_id (
+insert into  kdz_01_dwh.weather_id (
 local_time
 ,system_n
 )
@@ -452,63 +462,63 @@ from kdz_01_etl.weather_id;
 
 INSERT INTO kdz_01_dds.airport_weather (airport_dk, cold, rain, snow, thunderstorm, drizzle, fog_mist,weather_type_dk, t, max_gws, w_speed, date_start, date_end)
 SELECT
-   1335 AS airport_dk,
-   CASE WHEN t_air_temp < 0 THEN 1 ELSE 0 END AS cold,
-   CASE WHEN ww_recent ILIKE '%rain%' OR ww_present ILIKE '%rain%' THEN 1 ELSE 0 END AS rain,
-   CASE WHEN ww_recent ILIKE '%snow%' OR ww_present ILIKE '%snow%' THEN 1 ELSE 0 END AS snow,
-   CASE WHEN ww_recent ILIKE '%thunderstorm%' OR ww_present ILIKE '%thunderstorm%' THEN 1 ELSE 0 END AS thunderstorm,
-   CASE WHEN ww_recent ILIKE '%drizzle%' OR ww_present ILIKE '%drizzle%' THEN 1 ELSE 0 END AS drizzle,
-   CASE WHEN ww_recent ILIKE '%fog%' OR ww_present ILIKE '%fog%' OR ww_recent ILIKE '%mist%' OR ww_present ILIKE '%mist%' THEN 1 ELSE 0 END AS fog_mist,
-   CONCAT(CASE WHEN t_air_temp < 0 THEN 1 ELSE 0 END,
-          CASE WHEN ww_recent ILIKE '%rain%' OR ww_present ILIKE '%rain%' THEN 1 ELSE 0 END,
-          CASE WHEN ww_recent ILIKE '%snow%' OR ww_present ILIKE '%snow%' THEN 1 ELSE 0 END,
-          CASE WHEN ww_recent ILIKE '%thunderstorm%' OR ww_present ILIKE '%thunderstorm%' THEN 1 ELSE 0 END,
-          CASE WHEN ww_recent ILIKE '%drizzle%' OR ww_present ILIKE '%drizzle%' THEN 1 ELSE 0 END,
-          CASE WHEN ww_recent ILIKE '%fog%' OR ww_present ILIKE '%fog%' OR ww_recent ILIKE '%mist%' OR ww_present ILIKE '%mist%' THEN 1 ELSE 0 END) AS weather_type_dk,
-   t_air_temp as t,
-   ff10_max_gust_value AS max_gws,
-   ff_wind_speed AS w_speed,
-   w.local_time AS date_start,
-   COALESCE(LEAD(w.local_time) OVER (PARTITION BY 1335 ORDER BY w.local_time), '3000-01-01'::timestamp) AS date_end
+   1335 AS airport_dk,
+   CASE WHEN t_air_temp < 0 THEN 1 ELSE 0 END AS cold,
+   CASE WHEN ww_recent ILIKE '%rain%' OR ww_present ILIKE '%rain%' THEN 1 ELSE 0 END AS rain,
+   CASE WHEN ww_recent ILIKE '%snow%' OR ww_present ILIKE '%snow%' THEN 1 ELSE 0 END AS snow,
+   CASE WHEN ww_recent ILIKE '%thunderstorm%' OR ww_present ILIKE '%thunderstorm%' THEN 1 ELSE 0 END AS thunderstorm,
+   CASE WHEN ww_recent ILIKE '%drizzle%' OR ww_present ILIKE '%drizzle%' THEN 1 ELSE 0 END AS drizzle,
+   CASE WHEN ww_recent ILIKE '%fog%' OR ww_present ILIKE '%fog%' OR ww_recent ILIKE '%mist%' OR ww_present ILIKE '%mist%' THEN 1 ELSE 0 END AS fog_mist,
+   CONCAT(CASE WHEN t_air_temp < 0 THEN 1 ELSE 0 END,
+          CASE WHEN ww_recent ILIKE '%rain%' OR ww_present ILIKE '%rain%' THEN 1 ELSE 0 END,
+          CASE WHEN ww_recent ILIKE '%snow%' OR ww_present ILIKE '%snow%' THEN 1 ELSE 0 END,
+          CASE WHEN ww_recent ILIKE '%thunderstorm%' OR ww_present ILIKE '%thunderstorm%' THEN 1 ELSE 0 END,
+          CASE WHEN ww_recent ILIKE '%drizzle%' OR ww_present ILIKE '%drizzle%' THEN 1 ELSE 0 END,
+          CASE WHEN ww_recent ILIKE '%fog%' OR ww_present ILIKE '%fog%' OR ww_recent ILIKE '%mist%' OR ww_present ILIKE '%mist%' THEN 1 ELSE 0 END) AS weather_type_dk,
+   t_air_temp as t,
+   ff10_max_gust_value AS max_gws,
+   ff_wind_speed AS w_speed,
+   w.local_time AS date_start,
+   COALESCE(LEAD(w.local_time) OVER (PARTITION BY 1335 ORDER BY w.local_time), '3000-01-01'::timestamp) AS date_end
 FROM kdz_01_staging.weather w
 INNER JOIN kdz_01_dwh.weather_id i ON w.local_time = i.local_time
 ON CONFLICT (airport_dk, date_start) DO UPDATE SET
-   weather_type_dk = EXCLUDED.weather_type_dk,
-   cold = EXCLUDED.cold,
-   rain = EXCLUDED.rain,
-   snow = EXCLUDED.snow,
-   thunderstorm = EXCLUDED.thunderstorm,
-   drizzle = EXCLUDED.drizzle,
-   fog_mist = EXCLUDED.fog_mist,
-   t = EXCLUDED.t,
-   max_gws = EXCLUDED.max_gws,
-   w_speed = EXCLUDED.w_speed,
-   date_end = EXCLUDED.date_end;
+   weather_type_dk = EXCLUDED.weather_type_dk,
+   cold = EXCLUDED.cold,
+   rain = EXCLUDED.rain,
+   snow = EXCLUDED.snow,
+   thunderstorm = EXCLUDED.thunderstorm,
+   drizzle = EXCLUDED.drizzle,
+   fog_mist = EXCLUDED.fog_mist,
+   t = EXCLUDED.t,
+   max_gws = EXCLUDED.max_gws,
+   w_speed = EXCLUDED.w_speed,
+   date_end = EXCLUDED.date_end;
 
 —----------
 
 insert into mart.fact_departure (
-airport_origin_dk, 
+airport_origin_dk, 
 airport_destination_dk,
-weather_type_dk, 
-flight_scheduled_ts, 
-flight_actual_time, 
-flight_number, 
-distance, 
-tail_number, 
-airline,  
-dep_delay_min, 
-cancelled, 
+weather_type_dk, 
+flight_scheduled_ts, 
+flight_actual_time, 
+flight_number, 
+distance, 
+tail_number, 
+airline,  
+dep_delay_min, 
+cancelled, 
 cancellation_code,
-t, 
-max_gws, 
-w_speed, 
-air_time, 
+t, 
+max_gws, 
+w_speed, 
+air_time, 
 author,
 loaded_ts
 )
 
-select  
+select  
 kdz_01_dds.flights.airport_origin_dk,
 kdz_01_dds.flights.airport_dest_dk,
 kdz_01_dds.airport_weather.weather_type_dk,
@@ -528,30 +538,32 @@ kdz_01_dds.flights.air_time,
 1 as author,
 now() as loaded_ts
 
-from kdz_01_dds.flights 
-join kdz_01_dds.airport_weather 
-on  
+from kdz_01_dds.flights 
+join kdz_01_dds.airport_weather 
+on  
 (kdz_01_dds.flights.flight_dep_scheduled_ts >= kdz_01_dds.airport_weather.date_start) AND (kdz_01_dds.flights.flight_dep_scheduled_ts < kdz_01_dds.airport_weather.date_end)
 
 on conflict (airport_origin_dk, airport_destination_dk, flight_scheduled_ts, flight_number) do update
-set 
-airport_origin_dk = excluded.airport_origin_dk , 
-airport_destination_dk = excluded.airport_destination_dk  ,
-weather_type_dk = excluded.weather_type_dk , 
-flight_scheduled_ts = excluded.flight_scheduled_ts , 
-flight_actual_time = excluded.flight_actual_time , 
-flight_number = excluded.flight_number , 
-distance = excluded.distance , 
-tail_number = excluded.tail_number , 
-airline = excluded.airline , 
-dep_delay_min = excluded.dep_delay_min , 
-cancelled = excluded.cancelled , 
+set 
+airport_origin_dk = excluded.airport_origin_dk , 
+airport_destination_dk = excluded.airport_destination_dk  ,
+weather_type_dk = excluded.weather_type_dk , 
+flight_scheduled_ts = excluded.flight_scheduled_ts , 
+flight_actual_time = excluded.flight_actual_time , 
+flight_number = excluded.flight_number , 
+distance = excluded.distance , 
+tail_number = excluded.tail_number , 
+airline = excluded.airline , 
+dep_delay_min = excluded.dep_delay_min , 
+cancelled = excluded.cancelled , 
 cancellation_code = excluded.cancellation_code ,
-t = excluded.t , 
-max_gws = excluded.max_gws , 
-w_speed = excluded.w_speed , 
-air_time = excluded.air_time , 
-author = 1 , 
+t = excluded.t , 
+max_gws = excluded.max_gws , 
+w_speed = excluded.w_speed , 
+air_time = excluded.air_time , 
+author = 1 , 
 loaded_ts = now()
 ;
+
+
 
